@@ -1,0 +1,6 @@
+{
+  "python.defaultInterpreterPath": "./Melody-Snap-Backend/venv/bin/python",
+  "python.analysis.extraPaths": [
+    "./Melody-Snap-Backend"
+  ]
+}
