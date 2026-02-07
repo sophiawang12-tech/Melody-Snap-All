@@ -82,7 +82,7 @@ export default function CreateScreen() {
     let result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
-      aspect: [4, 3],
+      aspect: [3, 4],
       quality: 1,
     });
 
@@ -98,34 +98,12 @@ export default function CreateScreen() {
   const handleUpload = async () => {
     if (!capturedImage) return;
     
-    setIsUploading(true);
-    
-    try {
-      // Optimize image before upload
-      // Resize to max 512px width/height and compress to 0.5 quality
-      const manipResult = await ImageManipulator.manipulateAsync(
-        capturedImage,
-        [{ resize: { width: 512 } }],
-        { compress: 0.5, format: ImageManipulator.SaveFormat.JPEG }
-      );
-
-      console.log(`[capture] Compressed image size: ${manipResult.width}x${manipResult.height}`);
-
-      // New logic: Upload image to Python backend (Suno/FastAPI)
-      const taskId = await generateSongTask(manipResult.uri);
-      
-      // Navigate to Player screen with taskId
-      router.push({
-        pathname: '/player',
-        params: { taskId: taskId }
-      });
-
-    } catch (error) {
-      console.error("Upload failed:", error);
-      Alert.alert("Error", "Failed to upload image for generation");
-    } finally {
-      setIsUploading(false);
-    }
+    // Navigate immediately to Player screen with only imageUri
+    // Player screen will handle image compression and upload
+    router.push({
+      pathname: '/player',
+      params: { imageUri: capturedImage }
+    });
   };
 
   // Render Content

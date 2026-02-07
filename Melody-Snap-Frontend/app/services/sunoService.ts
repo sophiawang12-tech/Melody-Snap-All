@@ -2,7 +2,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
 // 1. 定义常量 API_BASE_URL
-const API_BASE_URL = 'http://10.128.10.236:8000';
+const API_BASE_URL = 'http://10.128.16.213:8000';
 
 // 2. 定义接口 TaskStatusResponse
 export interface TaskStatusResponse {

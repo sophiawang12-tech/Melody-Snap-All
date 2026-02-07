@@ -1,16 +1,176 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, ActivityIndicator, SafeAreaView, TouchableOpacity, Text, Alert, Image } from 'react-native';
+import { View, StyleSheet, SafeAreaView, TouchableOpacity, Text, Alert, Animated, Dimensions, Image } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
+import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { COLORS, FONTS } from '../constants/theme';
-import { checkTaskStatus, TaskStatusResponse } from './services/sunoService';
+import { checkTaskStatus, generateSongTask, TaskStatusResponse } from './services/sunoService';
+import ShareCardModal from './components/ShareCardModal';
+import { generateShareUrl } from './services/shareService';
+
+const { width, height } = Dimensions.get('window');
+
+// ============================================
+// Animated Blob Component
+// ============================================
+interface BlobProps {
+  color: string;
+  size: number;
+  top?: number;
+  left?: number;
+  right?: number;
+  bottom?: number;
+  delay?: number;
+}
+
+const Blob = ({ color, size, top, left, right, bottom, delay = 0 }: BlobProps) => {
+  const anim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(anim, {
+          toValue: 1,
+          duration: 8000 + Math.random() * 4000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(anim, {
+          toValue: 0,
+          duration: 8000 + Math.random() * 4000,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, []);
+
+  const translateY = anim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 30],
+  });
+
+  const scale = anim.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [1, 1.1, 1],
+  });
+
+  return (
+    <Animated.View
+      style={{
+        position: 'absolute',
+        top,
+        left,
+        right,
+        bottom,
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        backgroundColor: color,
+        opacity: 0.6,
+        transform: [{ translateY }, { scale }],
+      }}
+    />
+  );
+};
+
+// ============================================
+// Waveform Loader Animation Component
+// ============================================
+
+interface WaveBarProps {
+  color: string;
+  delay: number;
+  minHeight: number;
+  maxHeight: number;
+}
+
+const WaveBar = ({ color, delay, minHeight, maxHeight }: WaveBarProps) => {
+  const animatedHeight = useRef(new Animated.Value(minHeight)).current;
+
+  useEffect(() => {
+    const animate = () => {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(animatedHeight, {
+            toValue: maxHeight,
+            duration: 400 + Math.random() * 200,
+            useNativeDriver: false,
+          }),
+          Animated.timing(animatedHeight, {
+            toValue: minHeight,
+            duration: 400 + Math.random() * 200,
+            useNativeDriver: false,
+          }),
+        ])
+      ).start();
+    };
+
+    const timeout = setTimeout(animate, delay);
+    return () => clearTimeout(timeout);
+  }, []);
+
+  return (
+    <Animated.View
+      style={{
+        width: 6,
+        height: animatedHeight,
+        backgroundColor: color,
+        borderRadius: 3,
+        marginHorizontal: 3,
+      }}
+    />
+  );
+};
+
+const WaveformLoader = () => {
+  // Matches design colors: Accent, Highlight, Neon
+  const bars: WaveBarProps[] = [
+    { color: 'rgba(255, 183, 178, 0.4)', delay: 100, minHeight: 16, maxHeight: 32 },
+    { color: 'rgba(255, 183, 178, 0.6)', delay: 300, minHeight: 24, maxHeight: 48 },
+    { color: '#FFB7B2', delay: 0, minHeight: 40, maxHeight: 60 }, // Center
+    { color: '#FF8E8E', delay: 200, minHeight: 32, maxHeight: 50 }, // Neon
+    { color: '#FFB7B2', delay: 400, minHeight: 40, maxHeight: 60 },
+    { color: 'rgba(255, 183, 178, 0.6)', delay: 100, minHeight: 24, maxHeight: 48 },
+    { color: 'rgba(255, 183, 178, 0.4)', delay: 300, minHeight: 16, maxHeight: 32 },
+  ];
+
+  return (
+    <View style={waveformStyles.container}>
+      {bars.map((bar, index) => (
+        <WaveBar
+          key={index}
+          color={bar.color}
+          delay={bar.delay}
+          minHeight={bar.minHeight}
+          maxHeight={bar.maxHeight}
+        />
+      ))}
+    </View>
+  );
+};
+
+const waveformStyles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    height: 48,
+    marginBottom: 6,
+  },
+});
+
+// ============================================
+// Main Player Screen Component
+// ============================================
 
 export default function PlayerScreen() {
   const router = useRouter();
-  const { taskId } = useLocalSearchParams<{ taskId: string }>();
+  const { taskId: urlTaskId, imageUri } = useLocalSearchParams<{ taskId?: string; imageUri?: string }>();
   
+  const [taskId, setTaskId] = useState<string | null>(urlTaskId || null);
   const [status, setStatus] = useState<TaskStatusResponse['status']>('pending');
   const [message, setMessage] = useState<string>('Initializing...');
   const [analysisResult, setAnalysisResult] = useState<any>(null);
@@ -18,14 +178,27 @@ export default function PlayerScreen() {
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [positionMillis, setPositionMillis] = useState(0);
+  const [durationMillis, setDurationMillis] = useState(0);
+  const [showShareModal, setShowShareModal] = useState(false);
 
-  // Poll for task status
+  // Initialize: upload image if needed, then poll for task status
   useEffect(() => {
-    if (!taskId) {
-      Alert.alert('Error', 'No task ID provided');
+    // Check if we have either taskId or imageUri
+    if (!taskId && !imageUri) {
+      Alert.alert('Error', 'No task ID or image provided');
       router.back();
       return;
     }
+
+    // If no taskId, we need to upload first
+    if (!taskId && imageUri) {
+      uploadImageAndGetTaskId();
+      return;
+    }
+
+    // If we have taskId, start polling
+    if (!taskId) return;
 
     let intervalId: NodeJS.Timeout;
 
@@ -50,14 +223,10 @@ export default function PlayerScreen() {
         }
       } catch (error) {
         console.error('[Player] Polling error:', error);
-        // Continue polling even on error, might be temporary network issue
       }
     };
 
-    // Initial check
     pollStatus();
-    
-    // Poll every 3 seconds
     intervalId = setInterval(pollStatus, 3000);
 
     return () => {
@@ -65,7 +234,6 @@ export default function PlayerScreen() {
     };
   }, [taskId]);
 
-  // Cleanup sound on unmount
   useEffect(() => {
     return () => {
       if (sound) {
@@ -75,10 +243,43 @@ export default function PlayerScreen() {
     };
   }, [sound]);
 
+  const uploadImageAndGetTaskId = async () => {
+    if (!imageUri) {
+      Alert.alert('Error', 'No image provided');
+      router.back();
+      return;
+    }
+
+    try {
+      setMessage('Initializing...');
+      console.log('[Player] Starting image upload process');
+
+      // Compress image
+      const manipResult = await ImageManipulator.manipulateAsync(
+        imageUri as string,
+        [{ resize: { width: 512 } }],
+        { compress: 0.5, format: ImageManipulator.SaveFormat.JPEG }
+      );
+
+      console.log(`[Player] Compressed image size: ${manipResult.width}x${manipResult.height}`);
+
+      // Upload to backend
+      setMessage('Uploading...');
+      const newTaskId = await generateSongTask(manipResult.uri);
+      
+      console.log(`[Player] Received task ID: ${newTaskId}`);
+      setTaskId(newTaskId);
+      setMessage('Analyzing...');
+    } catch (error) {
+      console.error('[Player] Upload failed:', error);
+      Alert.alert('Upload Failed', 'Failed to upload image. Please try again.');
+      router.back();
+    }
+  };
+
   const loadAndPlayMusic = async (url: string) => {
     try {
       console.log(`[Player] Loading sound from ${url}`);
-      // Configure audio mode for playback
       await Audio.setAudioModeAsync({
         playsInSilentModeIOS: true,
         staysActiveInBackground: true,
@@ -92,14 +293,17 @@ export default function PlayerScreen() {
       setSound(newSound);
       setIsPlaying(true);
 
-      // Listen for playback status updates
-      newSound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded) {
-          setIsPlaying(status.isPlaying);
-          if (status.didJustFinish) {
-            setIsPlaying(false);
-            // Optional: reset to beginning
+      newSound.setOnPlaybackStatusUpdate((playbackStatus) => {
+        if (playbackStatus.isLoaded) {
+          setIsPlaying(playbackStatus.isPlaying);
+          setPositionMillis(playbackStatus.positionMillis ?? 0);
+          if (playbackStatus.durationMillis) {
+            setDurationMillis(playbackStatus.durationMillis);
+          }
+          if (playbackStatus.didJustFinish) {
+            // Loop: reset to beginning and replay
             newSound.setPositionAsync(0);
+            newSound.playAsync();
           }
         }
       });
@@ -119,6 +323,16 @@ export default function PlayerScreen() {
     }
   };
 
+  const formatTime = (millis: number) => {
+    const totalSeconds = Math.floor(millis / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+  };
+
+  const progress = durationMillis > 0 ? (positionMillis / durationMillis) * 100 : 0;
+  const isCompleted = !isLoading && status === 'completed';
+
   const handleBack = () => {
     if (sound) {
       sound.stopAsync();
@@ -128,73 +342,168 @@ export default function PlayerScreen() {
 
   return (
     <View style={styles.container}>
-      <StatusBar style="light" />
+      <StatusBar style={isCompleted ? "light" : "dark"} />
+      
+      {/* Background: Full-screen photo when completed, gradient + blobs otherwise */}
+      <View style={StyleSheet.absoluteFill}>
+        {isCompleted && imageUri ? (
+          <>
+            <Image
+              source={{ uri: imageUri as string }}
+              style={StyleSheet.absoluteFill}
+              resizeMode="cover"
+            />
+            <LinearGradient
+              colors={['rgba(0,0,0,0.3)', 'rgba(0,0,0,0.7)']}
+              style={StyleSheet.absoluteFill}
+            />
+          </>
+        ) : (
+          <>
+            <LinearGradient
+              colors={['#FDFCF8', '#E8EFE8']}
+              style={StyleSheet.absoluteFill}
+            />
+            {/* Animated Blobs */}
+            <Blob color="rgba(255, 183, 178, 0.2)" size={width * 0.8} top={-width * 0.4} left={-width * 0.2} />
+            <Blob color="rgba(232, 239, 232, 0.4)" size={width * 0.8} bottom={-width * 0.4} right={-width * 0.2} delay={2000} />
+            <Blob color="rgba(239, 237, 244, 0.4)" size={width * 0.6} top={height * 0.3} right={-width * 0.1} delay={4000} />
+          </>
+        )}
+      </View>
+
       <SafeAreaView style={styles.safeArea}>
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-             <Ionicons name="arrow-back" size={24} color={COLORS.text.dark} />
+             <BlurView intensity={20} tint={isCompleted ? "dark" : "light"} style={styles.blurButton}>
+                <Ionicons name="chevron-back" size={24} color={isCompleted ? '#FFF' : COLORS.text.dark} />
+             </BlurView>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Now Playing</Text>
-          <View style={{ width: 40 }} />
+          <Text style={[styles.headerTitle, isCompleted && { color: '#FFF' }]}>NOW PLAYING</Text>
+          
+          {/* Share button - only show when completed */}
+          {isCompleted && musicUrl && taskId ? (
+            <TouchableOpacity 
+              onPress={() => setShowShareModal(true)} 
+              style={styles.backButton}
+            >
+              <BlurView intensity={20} tint="dark" style={styles.blurButton}>
+                <Ionicons name="share-outline" size={24} color="#FFF" />
+              </BlurView>
+            </TouchableOpacity>
+          ) : (
+            <View style={{ width: 44 }} />
+          )}
         </View>
 
-        <View style={styles.playerContainer}>
+        <View style={styles.contentContainer}>
           {isLoading || status !== 'completed' ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={COLORS.primaryAccent} />
+            <View style={styles.loadingCenterWrapper}>
+            <BlurView intensity={20} tint="light" style={styles.loadingCard}>
+              <WaveformLoader />
               
               <Text style={styles.loadingText}>
-                {message || (status === 'pending' ? 'Waiting in queue...' : 'Processing...')}
+                {message || (status === 'pending' ? 'Generating Magic...' : 'Processing...')}
               </Text>
 
               {analysisResult && (
                 <View style={styles.analysisContainer}>
-                  <Text style={styles.analysisTitle}>Vibe Detected:</Text>
+                  <Text style={styles.analysisLabel}>VIBE DETECTED</Text>
                   <Text style={styles.analysisText}>
-                    {analysisResult.title || analysisResult.style || 'Analyzing image content...'}
+                    {analysisResult.title || analysisResult.style || 'Analyzing...'}
                   </Text>
+                  
+                  {analysisResult.tags && analysisResult.tags.length > 0 && (
+                    <View style={styles.tagsContainer}>
+                      {analysisResult.tags.map((tag: string, index: number) => (
+                        <View key={index} style={styles.tagBadge}>
+                          <Text style={styles.tagText}>{tag}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
                 </View>
               )}
-              
-              {!analysisResult && (
-                <Text style={styles.subLoadingText}>This may take up to a minute.</Text>
-              )}
+            </BlurView>
             </View>
           ) : (
             <>
-              {/* Album Art Placeholder */}
-              <View style={styles.albumArtContainer}>
-                <View style={styles.albumArt}>
-                  <Ionicons name="musical-notes" size={80} color={COLORS.text.muted} />
+              {/* Track Info */}
+              <View style={styles.trackInfo}>
+                <Text style={[styles.trackTitle, { color: '#FFF' }]}>Suno AI Song</Text>
+                <View style={styles.trackSubtitleRow}>
+                  <Ionicons name="sparkles" size={16} color={COLORS.primaryAccent} />
+                  <Text style={[styles.trackSubtitle, { color: 'rgba(255,255,255,0.7)' }]}>Generated from your snap</Text>
                 </View>
               </View>
 
-              {/* Track Info */}
-              <View style={styles.trackInfo}>
-                <Text style={styles.trackTitle}>Suno AI Song</Text>
-                <Text style={styles.trackSubtitle}>Generated from your photo</Text>
-              </View>
-
               {/* Controls */}
-              <View style={styles.controls}>
-                <TouchableOpacity 
-                  onPress={togglePlayback} 
-                  style={styles.playButton}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons 
-                    name={isPlaying ? "pause" : "play"} 
-                    size={48} 
-                    color="#FFF" 
-                    style={{ marginLeft: isPlaying ? 0 : 4 }} // visual adjustment for play icon
-                  />
-                </TouchableOpacity>
+              <View style={styles.controlsSection}>
+                {/* Waveform Visualizer */}
+                <WaveformLoader />
+
+                {/* Progress Bar */}
+                <View style={styles.progressContainer}>
+                  <View style={styles.progressBarBg}>
+                    <LinearGradient
+                      colors={[COLORS.primaryAccent, '#FF8E8E']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={{ width: `${progress}%`, height: '100%' }}
+                    />
+                  </View>
+                  <View style={styles.progressLabels}>
+                    <Text style={[styles.timeText, { color: 'rgba(255,255,255,0.7)' }]}>{formatTime(positionMillis)}</Text>
+                    <Text style={[styles.timeText, { color: 'rgba(255,255,255,0.7)' }]}>{formatTime(durationMillis)}</Text>
+                  </View>
+                </View>
+
+                {/* Play Buttons */}
+                <View style={styles.playControls}>
+                  <TouchableOpacity>
+                    <Ionicons name="play-skip-back" size={28} color="rgba(255,255,255,0.5)" />
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    onPress={togglePlayback}
+                    activeOpacity={0.8}
+                    style={styles.playButtonWrapper}
+                  >
+                    <LinearGradient
+                      colors={[COLORS.primaryAccent, '#FF8E8E']}
+                      style={styles.playButtonGradient}
+                    >
+                      <Ionicons 
+                        name={isPlaying ? "pause" : "play"} 
+                        size={40} 
+                        color="white" 
+                        style={{ marginLeft: isPlaying ? 0 : 4 }}
+                      />
+                    </LinearGradient>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity>
+                    <Ionicons name="play-skip-forward" size={28} color="rgba(255,255,255,0.5)" />
+                  </TouchableOpacity>
+                </View>
               </View>
             </>
           )}
         </View>
       </SafeAreaView>
+      
+      {/* Share Modal */}
+      {imageUri && taskId && (
+        <ShareCardModal
+          visible={showShareModal}
+          onClose={() => setShowShareModal(false)}
+          imageUri={imageUri as string}
+          shareUrl={generateShareUrl(taskId)}
+          trackTitle="Suno AI Song"
+          trackSubtitle="Generated from your snap"
+        />
+      )}
     </View>
   );
 }
@@ -202,7 +511,7 @@ export default function PlayerScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: '#FDFCF8',
   },
   safeArea: {
     flex: 1,
@@ -214,112 +523,164 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
     height: 60,
+    zIndex: 10,
   },
   headerTitle: {
     fontFamily: FONTS.primary.semiBold,
-    fontSize: 18,
+    fontSize: 16,
     color: COLORS.text.dark,
+    letterSpacing: 1,
   },
   backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: COLORS.surface,
+    borderRadius: 22,
+    overflow: 'hidden',
+  },
+  blurButton: {
+    width: 44,
+    height: 44,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.3)',
   },
-  playerContainer: {
+  contentContainer: {
     flex: 1,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+  },
+  loadingCenterWrapper: {
+    flex: 1,
+    width: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingBottom: 50,
   },
-  loadingContainer: {
+  loadingCard: {
+    padding: 30,
+    borderRadius: 24,
     alignItems: 'center',
-    paddingHorizontal: 40,
+    width: '100%',
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.4)',
   },
   loadingText: {
     marginTop: 20,
-    fontFamily: FONTS.primary.regular,
+    fontFamily: FONTS.primary.semiBold,
     fontSize: 18,
     color: COLORS.text.dark,
     textAlign: 'center',
   },
-  subLoadingText: {
-    marginTop: 10,
-    fontFamily: FONTS.primary.regular,
-    fontSize: 14,
-    color: COLORS.text.muted,
-    textAlign: 'center',
-  },
   analysisContainer: {
-    marginTop: 20,
-    padding: 16,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 12,
-    width: '100%',
+    marginTop: 24,
     alignItems: 'center',
+    width: '100%',
   },
-  analysisTitle: {
-    fontFamily: FONTS.primary.semiBold,
-    fontSize: 14,
+  analysisLabel: {
+    fontFamily: FONTS.primary.extraBold,
+    fontSize: 12,
     color: COLORS.primaryAccent,
-    marginBottom: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 1.5,
+    marginBottom: 8,
   },
   analysisText: {
-    fontFamily: FONTS.primary.medium,
+    fontFamily: FONTS.primary.regular,
     fontSize: 16,
-    color: COLORS.text.light,
+    color: COLORS.text.dark,
     textAlign: 'center',
   },
-  albumArtContainer: {
-    marginBottom: 40,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.2,
-    shadowRadius: 20,
-    elevation: 10,
-  },
-  albumArt: {
-    width: 280,
-    height: 280,
-    borderRadius: 20,
-    backgroundColor: COLORS.secondary,
+  tagsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'center',
-    alignItems: 'center',
+    marginTop: 12,
+    gap: 8,
   },
+  tagBadge: {
+    backgroundColor: 'rgba(255, 183, 178, 0.15)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 183, 178, 0.3)',
+  },
+  tagText: {
+    fontFamily: FONTS.primary.semiBold,
+    fontSize: 11,
+    color: COLORS.primaryAccent,
+    letterSpacing: 0.5,
+  },
+
+
+  // Track Info
   trackInfo: {
     alignItems: 'center',
-    marginBottom: 50,
+    marginBottom: 12,
   },
   trackTitle: {
     fontFamily: FONTS.primary.extraBold,
     fontSize: 24,
     color: COLORS.text.dark,
-    marginBottom: 8,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  trackSubtitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   trackSubtitle: {
     fontFamily: FONTS.primary.regular,
     fontSize: 16,
     color: COLORS.text.muted,
   },
-  controls: {
+
+  // Controls
+  controlsSection: {
+    width: '100%',
+    maxWidth: 340,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  progressContainer: {
+    width: '100%',
+    marginBottom: 16,
+  },
+  progressBarBg: {
+    height: 6,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  progressLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  timeText: {
+    fontSize: 12,
+    fontFamily: FONTS.primary.semiBold,
+    color: COLORS.text.muted,
+  },
+  playControls: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 32,
   },
-  playButton: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: COLORS.primaryAccent,
+  playButtonWrapper: {
+    shadowColor: '#FFB7B2',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  playButtonGradient: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: COLORS.primaryAccent,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 16,
-    elevation: 8,
   },
 });
