@@ -1,4 +1,4 @@
-import google.generativeai as genai
+import google.generativeai as genai  # pyright: ignore[reportMissingImports]
 from PIL import Image
 import json
 import io

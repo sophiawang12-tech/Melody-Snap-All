@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, SafeAreaView, TouchableOpacity, Text, Alert, Animated, Dimensions, Image } from 'react-native';
+import { View, StyleSheet, SafeAreaView, TouchableOpacity, Text, Alert, Animated, Dimensions, Image, Easing } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
@@ -7,6 +7,7 @@ import { Audio } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import * as ImageManipulator from 'expo-image-manipulator';
+import Svg, { Circle, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 import { COLORS, FONTS } from '../constants/theme';
 import { checkTaskStatus, generateSongTask, TaskStatusResponse } from './services/sunoService';
 import ShareCardModal from './components/ShareCardModal';
@@ -163,6 +164,198 @@ const waveformStyles = StyleSheet.create({
 });
 
 // ============================================
+// Progress Mapping (message → percentage)
+// ============================================
+
+const STAGE_PROGRESS: Record<string, number> = {
+  'Initializing...': 2,
+  'Uploading...': 8,
+  'Analyzing...': 15,
+  'Analyzing your photo...': 22,
+  'Vibe detected! Composing melody...': 42,
+  'AI Band is performing...': 65,
+  'Composition complete!': 100,
+};
+
+const STATUS_PROGRESS: Record<string, number> = {
+  pending: 5,
+  processing: 35,
+  completed: 100,
+  failed: 0,
+};
+
+// ============================================
+// GlowRing - Animated SVG Circular Progress
+// ============================================
+
+const RING_SIZE = 240;
+const RING_STROKE = 5;
+const RING_RADIUS = (RING_SIZE - RING_STROKE * 2) / 2;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+interface GlowRingProps {
+  progress: number; // 0-100
+  imageUri?: string;
+}
+
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
+const GlowRing = ({ progress, imageUri }: GlowRingProps) => {
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useRef(new Animated.Value(0.3)).current;
+  const animatedProgress = useRef(new Animated.Value(0)).current;
+  const photoSize = RING_SIZE - 56;
+
+  // Continuous rotation
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(rotateAnim, {
+        toValue: 1,
+        duration: 5000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start();
+  }, []);
+
+  // Glow pulse
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 0.7,
+          duration: 2000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0.3,
+          duration: 2000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, []);
+
+  // Smooth progress animation
+  useEffect(() => {
+    Animated.timing(animatedProgress, {
+      toValue: progress,
+      duration: 1500,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: false,
+    }).start();
+  }, [progress]);
+
+  const rotate = rotateAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  const strokeDashoffset = animatedProgress.interpolate({
+    inputRange: [0, 100],
+    outputRange: [RING_CIRCUMFERENCE, 0],
+    extrapolate: 'clamp',
+  });
+
+  return (
+    <View style={glowRingStyles.container}>
+      {/* Outer glow layer */}
+      <Animated.View
+        style={[
+          glowRingStyles.glowOuter,
+          { opacity: pulseAnim },
+        ]}
+      />
+
+      {/* Rotating ring */}
+      <Animated.View style={{ transform: [{ rotate }] }}>
+        <Svg width={RING_SIZE} height={RING_SIZE}>
+          <Defs>
+            <SvgLinearGradient id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <Stop offset="0%" stopColor={COLORS.primaryAccent} stopOpacity="1" />
+              <Stop offset="50%" stopColor="#FF8E8E" stopOpacity="0.9" />
+              <Stop offset="100%" stopColor={COLORS.primaryAccent} stopOpacity="0.15" />
+            </SvgLinearGradient>
+          </Defs>
+          {/* Background track */}
+          <Circle
+            cx={RING_SIZE / 2}
+            cy={RING_SIZE / 2}
+            r={RING_RADIUS}
+            stroke="rgba(255, 183, 178, 0.12)"
+            strokeWidth={RING_STROKE}
+            fill="none"
+          />
+          {/* Progress arc */}
+          <AnimatedCircle
+            cx={RING_SIZE / 2}
+            cy={RING_SIZE / 2}
+            r={RING_RADIUS}
+            stroke="url(#ringGradient)"
+            strokeWidth={RING_STROKE}
+            fill="none"
+            strokeLinecap="round"
+            strokeDasharray={RING_CIRCUMFERENCE}
+            strokeDashoffset={strokeDashoffset}
+            transform={`rotate(-90, ${RING_SIZE / 2}, ${RING_SIZE / 2})`}
+          />
+        </Svg>
+      </Animated.View>
+
+      {/* Center: User photo */}
+      {imageUri && (
+        <View style={[glowRingStyles.photoWrapper, { width: photoSize, height: photoSize, borderRadius: photoSize / 2 }]}>
+          <Image
+            source={{ uri: imageUri }}
+            style={glowRingStyles.photo}
+            resizeMode="cover"
+          />
+          <LinearGradient
+            colors={['transparent', 'rgba(255, 183, 178, 0.2)']}
+            style={StyleSheet.absoluteFill}
+          />
+        </View>
+      )}
+    </View>
+  );
+};
+
+const glowRingStyles = StyleSheet.create({
+  container: {
+    width: RING_SIZE,
+    height: RING_SIZE,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  glowOuter: {
+    position: 'absolute',
+    width: RING_SIZE + 40,
+    height: RING_SIZE + 40,
+    borderRadius: (RING_SIZE + 40) / 2,
+    backgroundColor: 'transparent',
+    shadowColor: COLORS.primaryAccent,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 40,
+    elevation: 20,
+    // Use a border trick to generate glow on iOS
+    borderWidth: 2,
+    borderColor: 'rgba(255, 183, 178, 0.08)',
+  },
+  photoWrapper: {
+    position: 'absolute',
+    overflow: 'hidden',
+    backgroundColor: '#F0EDE5',
+  },
+  photo: {
+    width: '100%',
+    height: '100%',
+  },
+});
+
+// ============================================
 // Main Player Screen Component
 // ============================================
 
@@ -181,6 +374,45 @@ export default function PlayerScreen() {
   const [positionMillis, setPositionMillis] = useState(0);
   const [durationMillis, setDurationMillis] = useState(0);
   const [showShareModal, setShowShareModal] = useState(false);
+
+  // Animated progress bar (bypasses React re-renders for smooth updates)
+  const playbackProgress = useRef(new Animated.Value(0)).current;
+
+  // Progress tracking
+  const [displayProgress, setDisplayProgress] = useState(0);
+  const crawlRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Map message/status to target progress and add slow crawl between stages
+  useEffect(() => {
+    const targetFromMessage = STAGE_PROGRESS[message];
+    const targetFromStatus = STATUS_PROGRESS[status];
+    const target = targetFromMessage ?? targetFromStatus ?? 5;
+
+    // Jump to the target immediately (animated inside GlowRing)
+    setDisplayProgress(target);
+
+    // Clear any previous crawl interval
+    if (crawlRef.current) clearInterval(crawlRef.current);
+
+    // If not yet complete, slowly crawl between stages so progress doesn't feel stuck
+    if (target < 100) {
+      // Determine the next stage ceiling so crawl never overshoots
+      const sortedStages = Object.values(STAGE_PROGRESS).sort((a, b) => a - b);
+      const nextCeiling = sortedStages.find((v) => v > target) ?? 100;
+      const maxCrawl = nextCeiling - 2; // leave gap before next stage jump
+
+      crawlRef.current = setInterval(() => {
+        setDisplayProgress((prev) => {
+          if (prev >= maxCrawl) return prev;
+          return prev + 0.5;
+        });
+      }, 2000);
+    }
+
+    return () => {
+      if (crawlRef.current) clearInterval(crawlRef.current);
+    };
+  }, [message, status]);
 
   // Initialize: upload image if needed, then poll for task status
   useEffect(() => {
@@ -221,8 +453,18 @@ export default function PlayerScreen() {
           clearInterval(intervalId);
           Alert.alert('Generation Failed', response.error || 'Unknown error occurred');
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('[Player] Polling error:', error);
+        // If task not found (404), the backend likely restarted and lost in-memory tasks
+        if (error?.message?.includes('404')) {
+          clearInterval(intervalId);
+          setIsLoading(false);
+          Alert.alert(
+            'Task Expired',
+            'The server was restarted and this task no longer exists. Please go back and try again.',
+            [{ text: 'Go Back', onPress: () => router.back() }]
+          );
+        }
       }
     };
 
@@ -287,7 +529,7 @@ export default function PlayerScreen() {
 
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri: url },
-        { shouldPlay: true }
+        { shouldPlay: true, progressUpdateIntervalMillis: 200 }
       );
       
       setSound(newSound);
@@ -296,12 +538,22 @@ export default function PlayerScreen() {
       newSound.setOnPlaybackStatusUpdate((playbackStatus) => {
         if (playbackStatus.isLoaded) {
           setIsPlaying(playbackStatus.isPlaying);
-          setPositionMillis(playbackStatus.positionMillis ?? 0);
-          if (playbackStatus.durationMillis) {
-            setDurationMillis(playbackStatus.durationMillis);
+          const pos = playbackStatus.positionMillis ?? 0;
+          const dur = playbackStatus.durationMillis ?? 0;
+          setPositionMillis(pos);
+          if (dur) {
+            setDurationMillis(dur);
+            // Drive animated progress bar directly (no re-render needed)
+            const pct = dur > 0 ? (pos / dur) * 100 : 0;
+            Animated.timing(playbackProgress, {
+              toValue: pct,
+              duration: 180, // smooth interpolation between updates
+              useNativeDriver: false,
+            }).start();
           }
           if (playbackStatus.didJustFinish) {
             // Loop: reset to beginning and replay
+            playbackProgress.setValue(0);
             newSound.setPositionAsync(0);
             newSound.playAsync();
           }
@@ -330,7 +582,6 @@ export default function PlayerScreen() {
     return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
   };
 
-  const progress = durationMillis > 0 ? (positionMillis / durationMillis) * 100 : 0;
   const isCompleted = !isLoading && status === 'completed';
 
   const handleBack = () => {
@@ -380,12 +631,18 @@ export default function PlayerScreen() {
                 <Ionicons name="chevron-back" size={24} color={isCompleted ? '#FFF' : COLORS.text.dark} />
              </BlurView>
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, isCompleted && { color: '#FFF' }]}>NOW PLAYING</Text>
+          <Text style={[styles.headerTitle, isCompleted && { color: '#FFF' }]}>
+            {isCompleted ? 'NOW PLAYING' : 'Creating'}
+          </Text>
           
           {/* Share button - only show when completed */}
           {isCompleted && musicUrl && taskId ? (
             <TouchableOpacity 
-              onPress={() => setShowShareModal(true)} 
+              onPress={async () => {
+                // Pause player audio so share modal can play its own
+                if (sound && isPlaying) await sound.pauseAsync();
+                setShowShareModal(true);
+              }} 
               style={styles.backButton}
             >
               <BlurView intensity={20} tint="dark" style={styles.blurButton}>
@@ -400,15 +657,23 @@ export default function PlayerScreen() {
         <View style={styles.contentContainer}>
           {isLoading || status !== 'completed' ? (
             <View style={styles.loadingCenterWrapper}>
-            <BlurView intensity={20} tint="light" style={styles.loadingCard}>
-              <WaveformLoader />
-              
-              <Text style={styles.loadingText}>
-                {message || (status === 'pending' ? 'Generating Magic...' : 'Processing...')}
+              {/* GlowRing with user photo */}
+              <GlowRing
+                progress={displayProgress}
+                imageUri={imageUri as string | undefined}
+              />
+
+              {/* Progress percentage + status message */}
+              <Text style={styles.progressPercent}>
+                {Math.round(displayProgress)}%{' '}
+                <Text style={styles.progressMessage}>
+                  {message || (status === 'pending' ? 'Generating...' : 'Processing...')}
+                </Text>
               </Text>
 
+              {/* Vibe detected card */}
               {analysisResult && (
-                <View style={styles.analysisContainer}>
+                <BlurView intensity={20} tint="light" style={styles.vibeCard}>
                   <Text style={styles.analysisLabel}>VIBE DETECTED</Text>
                   <Text style={styles.analysisText}>
                     {analysisResult.title || analysisResult.style || 'Analyzing...'}
@@ -423,15 +688,16 @@ export default function PlayerScreen() {
                       ))}
                     </View>
                   )}
-                </View>
+                </BlurView>
               )}
-            </BlurView>
             </View>
           ) : (
             <>
               {/* Track Info */}
               <View style={styles.trackInfo}>
-                <Text style={[styles.trackTitle, { color: '#FFF' }]}>Suno AI Song</Text>
+                <Text style={[styles.trackTitle, { color: '#FFF' }]}>
+                  {analysisResult?.title || 'Suno AI Song'}
+                </Text>
                 <View style={styles.trackSubtitleRow}>
                   <Ionicons name="sparkles" size={16} color={COLORS.primaryAccent} />
                   <Text style={[styles.trackSubtitle, { color: 'rgba(255,255,255,0.7)' }]}>Generated from your snap</Text>
@@ -446,11 +712,17 @@ export default function PlayerScreen() {
                 {/* Progress Bar */}
                 <View style={styles.progressContainer}>
                   <View style={styles.progressBarBg}>
-                    <LinearGradient
-                      colors={[COLORS.primaryAccent, '#FF8E8E']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={{ width: `${progress}%`, height: '100%' }}
+                    <Animated.View
+                      style={{
+                        width: playbackProgress.interpolate({
+                          inputRange: [0, 100],
+                          outputRange: ['0%', '100%'],
+                          extrapolate: 'clamp',
+                        }),
+                        height: '100%',
+                        borderRadius: 3,
+                        backgroundColor: COLORS.primaryAccent,
+                      }}
                     />
                   </View>
                   <View style={styles.progressLabels}>
@@ -500,8 +772,10 @@ export default function PlayerScreen() {
           onClose={() => setShowShareModal(false)}
           imageUri={imageUri as string}
           shareUrl={generateShareUrl(taskId)}
-          trackTitle="Suno AI Song"
-          trackSubtitle="Generated from your snap"
+          musicUrl={musicUrl || undefined}
+          trackTitle={analysisResult?.title || 'Melody Snap Song'}
+          trackSubtitle={analysisResult?.style || 'Generated from your snap'}
+          tags={analysisResult?.tags || []}
         />
       )}
     </View>
@@ -554,28 +828,29 @@ const styles = StyleSheet.create({
     width: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+    gap: 32,
   },
-  loadingCard: {
-    padding: 30,
-    borderRadius: 24,
+  progressPercent: {
+    fontFamily: FONTS.primary.extraBold,
+    fontSize: 28,
+    color: COLORS.text.dark,
+    textAlign: 'center',
+  },
+  progressMessage: {
+    fontFamily: FONTS.primary.regular,
+    fontSize: 16,
+    color: COLORS.text.muted,
+  },
+  vibeCard: {
+    paddingVertical: 20,
+    paddingHorizontal: 24,
+    borderRadius: 20,
     alignItems: 'center',
     width: '100%',
     backgroundColor: 'rgba(255,255,255,0.3)',
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.4)',
-  },
-  loadingText: {
-    marginTop: 20,
-    fontFamily: FONTS.primary.semiBold,
-    fontSize: 18,
-    color: COLORS.text.dark,
-    textAlign: 'center',
-  },
-  analysisContainer: {
-    marginTop: 24,
-    alignItems: 'center',
-    width: '100%',
   },
   analysisLabel: {
     fontFamily: FONTS.primary.extraBold,

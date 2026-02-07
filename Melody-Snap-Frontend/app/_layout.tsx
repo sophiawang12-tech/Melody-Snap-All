@@ -45,7 +45,6 @@ export default function Layout() {
       >
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="capture" options={{ headerShown: false, animation: 'slide_from_bottom' }} />
-        <Stack.Screen name="LoadingScreen" options={{ headerShown: false, animation: 'fade' }} />
       </Stack>
     </View>
   );

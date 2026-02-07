@@ -1,10 +1,15 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Form  # pyright: ignore[reportMissingImports]
+from fastapi.middleware.cors import CORSMiddleware  # pyright: ignore[reportMissingImports]
+from fastapi.staticfiles import StaticFiles  # pyright: ignore[reportMissingImports]
+from fastapi.responses import FileResponse  # pyright: ignore[reportMissingImports]
 import uuid
+import os
 import logging
 from datetime import datetime
+from pathlib import Path
 from models import TaskResponse, TaskDetail, TaskStatus
 from tasks import process_image_to_music, tasks_store
+from services.video import VideoService
 from config import get_settings
 
 # 配置日志
@@ -155,12 +160,71 @@ async def health_check():
     }
 
 
+@app.post("/api/generate-share-video")
+async def generate_share_video(
+    image: UploadFile = File(...),
+    audio_url: str = Form(...),
+    title: str = Form("Melody Snap Song"),
+    duration: int = Form(15),
+):
+    """
+    Generate a share video by composing an image with audio.
+    
+    - **image**: Card image (PNG from ViewShot)
+    - **audio_url**: URL to the music file
+    - **title**: Song title
+    - **duration**: Video duration in seconds (max 30)
+    
+    Returns the video file URL.
+    """
+    try:
+        logger.info(f"收到视频生成请求: title={title}, duration={duration}s")
+        
+        # Read image data
+        image_data = await image.read()
+        if len(image_data) > settings.MAX_IMAGE_SIZE:
+            raise HTTPException(status_code=400, detail="Image too large")
+        
+        # Clamp duration
+        duration = min(max(duration, 5), 30)
+        
+        # Generate video
+        video_service = VideoService()
+        video_path = await video_service.create_share_video(
+            image_data=image_data,
+            audio_url=audio_url,
+            title=title,
+            duration=duration,
+        )
+        
+        # Return video as a downloadable file
+        video_filename = os.path.basename(video_path)
+        video_url = f"/static/videos/{video_filename}"
+        
+        logger.info(f"视频生成完成: {video_url}")
+        return {
+            "status": "completed",
+            "video_url": video_url,
+            "video_filename": video_filename,
+        }
+        
+    except Exception as e:
+        logger.error(f"视频生成失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Video generation failed: {str(e)}")
+
+
+# Serve generated video files
+VIDEOS_DIR = Path(__file__).parent / "generated_videos"
+VIDEOS_DIR.mkdir(exist_ok=True)
+app.mount("/static/videos", StaticFiles(directory=str(VIDEOS_DIR)), name="videos")
+
+
 @app.get("/")
 async def root():
     """API 信息"""
     return {
         "service": "MelodySnap API",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "models": {
             "gemini": settings.GEMINI_MODEL,
             "suno": settings.SUNO_MODEL
@@ -171,5 +235,5 @@ async def root():
 
 
 if __name__ == "__main__":
-    import uvicorn
+    import uvicorn  # pyright: ignore[reportMissingImports]
     uvicorn.run(app, host="0.0.0.0", port=8000)

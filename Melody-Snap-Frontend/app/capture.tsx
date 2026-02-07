@@ -109,8 +109,7 @@ export default function CreateScreen() {
   // Render Content
   return (
     <View style={styles.container}>
-      <StatusBar style="light" /> 
-      {/* Camera usually looks better with dark status bar overlay, but UI is light */}
+      <StatusBar style={capturedImage ? "light" : "dark"} />
       <Stack.Screen options={{ headerShown: false }} />
 
       {capturedImage ? (
@@ -150,24 +149,36 @@ export default function CreateScreen() {
         </View>
       ) : (
         // STATE A: Camera Preview
-        <CameraView 
-          style={styles.camera} 
-          facing={facing} 
-          ref={cameraRef}
-          onCameraReady={() => setCameraReady(true)}
-        >
-          <SafeAreaView style={styles.overlayContainer}>
+        <View style={styles.cameraScreen}>
+          <SafeAreaView style={styles.cameraLayout}>
+            {/* Top Bar */}
             <View style={styles.topBar}>
-              <TouchableOpacity onPress={() => router.back()} style={styles.iconButtonGlass}>
-                <Ionicons name="close" size={24} color="#FFF" />
+              <TouchableOpacity onPress={() => router.back()} style={styles.iconButtonOnBg}>
+                <Ionicons name="close" size={24} color={COLORS.text.dark} />
               </TouchableOpacity>
+              <View style={styles.titleContainer}>
+                <Text style={styles.titleText}>Capture</Text>
+              </View>
+              <View style={{ width: 44 }} />
+            </View>
+
+            {/* Camera Viewfinder Card (3:4 aspect ratio) */}
+            <View style={styles.viewfinderWrapper}>
+              <View style={styles.viewfinderCard}>
+                <CameraView
+                  style={styles.cameraView}
+                  facing={facing}
+                  ref={cameraRef}
+                  onCameraReady={() => setCameraReady(true)}
+                />
+              </View>
             </View>
 
             {/* Bottom Controls */}
             <View style={styles.bottomControls}>
               <TouchableOpacity onPress={pickImage} style={styles.sideButton}>
-                <View style={styles.glassCircle}>
-                   <Ionicons name="images-outline" size={24} color="#FFF" />
+                <View style={styles.controlCircle}>
+                   <Ionicons name="images-outline" size={24} color={COLORS.text.dark} />
                 </View>
               </TouchableOpacity>
 
@@ -178,22 +189,27 @@ export default function CreateScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity onPress={toggleCameraType} style={styles.sideButton}>
-                 <View style={styles.glassCircle}>
-                    <Ionicons name="camera-reverse-outline" size={24} color="#FFF" />
+                 <View style={styles.controlCircle}>
+                    <Ionicons name="camera-reverse-outline" size={24} color={COLORS.text.dark} />
                  </View>
               </TouchableOpacity>
             </View>
           </SafeAreaView>
-        </CameraView>
+        </View>
       )}
     </View>
   );
 }
 
+// Camera viewfinder dimensions: 3:4 aspect ratio with horizontal padding
+const VIEWFINDER_PADDING = 24;
+const VIEWFINDER_WIDTH = width - VIEWFINDER_PADDING * 2;
+const VIEWFINDER_HEIGHT = (VIEWFINDER_WIDTH / 3) * 4;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: COLORS.secondary,
   },
   permissionContainer: {
     flex: 1,
@@ -219,14 +235,39 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.primary.semiBold,
     color: COLORS.text.dark,
   },
-  camera: {
+
+  // Camera screen (State A)
+  cameraScreen: {
     flex: 1,
+    backgroundColor: COLORS.secondary,
   },
+  cameraLayout: {
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  viewfinderWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewfinderCard: {
+    width: VIEWFINDER_WIDTH,
+    height: VIEWFINDER_HEIGHT,
+    borderRadius: 24,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+    ...SHADOWS.soft,
+  },
+  cameraView: {
+    width: '100%',
+    height: '100%',
+  },
+
+  // Review screen (State B)
   fullScreen: {
     flex: 1,
     width: width,
     height: height,
-    backgroundColor: COLORS.background, 
+    backgroundColor: COLORS.background,
   },
   previewImage: {
     ...StyleSheet.absoluteFillObject,
@@ -235,6 +276,8 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'space-between',
   },
+
+  // Shared
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -262,6 +305,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     ...SHADOWS.soft,
   },
+  iconButtonOnBg: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...SHADOWS.soft,
+  },
   iconButtonGlass: {
     width: 44,
     height: 44,
@@ -274,11 +326,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    paddingBottom: 50,
+    paddingBottom: Platform.OS === 'ios' ? 20 : 40,
   },
   sideButton: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  controlCircle: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(255,255,255,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...SHADOWS.soft,
   },
   glassCircle: {
     width: 50,
@@ -302,7 +363,7 @@ const styles = StyleSheet.create({
     borderColor: '#FFF',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: COLORS.primaryAccent,
   },
   shutterInner: {
     width: 68,
