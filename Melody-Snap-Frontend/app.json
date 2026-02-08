@@ -1,0 +1,67 @@
+{
+  "expo": {
+    "name": "MelodySnap",
+    "slug": "melodysnap",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.melodysnap.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "MelodySnap needs access to your camera to capture photos for music generation.",
+        "NSPhotoLibraryUsageDescription": "MelodySnap needs access to your photos to select images for music generation.",
+        "NSPhotoLibraryAddUsageDescription": "MelodySnap needs access to save share images to your photos.",
+        "NSMicrophoneUsageDescription": "MelodySnap needs microphone access for video recording."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow MelodySnap to access your camera."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow MelodySnap to access your photos."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow MelodySnap to save share images to your photos.",
+          "savePhotosPermission": "Allow MelodySnap to save share images to your photos."
+        }
+      ],
+      "expo-font"
+    ],
+    "scheme": "melodysnap"
+  }
+}
