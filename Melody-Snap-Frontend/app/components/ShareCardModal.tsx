@@ -12,6 +12,11 @@ import {
   Animated,
   Easing,
   SafeAreaView,
+  TextInput,
+  ScrollView,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -26,6 +31,21 @@ import { COLORS, FONTS } from '../../constants/theme';
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://10.128.10.236:8000';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+// ============================================
+// Gift Preset Messages
+// ============================================
+const GIFT_PRESETS = [
+  'Happy Birthday!',
+  'Congrats!',
+  'Miss You',
+  'Thank You',
+  'Good Luck',
+  'Love You',
+  'Well Done!',
+  'Cheers!',
+];
+const MAX_GIFT_CHARS = 20;
 
 // ============================================
 // Audio Visualizer Bar
@@ -205,10 +225,23 @@ export default function ShareCardModal({
   tags = [],
 }: ShareCardModalProps) {
   const viewShotRef = useRef<ViewShot>(null);
+  const giftViewShotRef = useRef<ViewShot>(null);
+  const exportShareRef = useRef<ViewShot>(null);
+  const exportGiftRef = useRef<ViewShot>(null);
+  const giftScrollRef = useRef<ScrollView>(null);
+  const giftEditAreaY = useRef(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingType, setProcessingType] = useState<'card' | 'video' | null>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'share' | 'gift'>('share');
+  const tabIndicatorAnim = useRef(new Animated.Value(0)).current;
+
+  // Gift page state
+  const [giftMessage, setGiftMessage] = useState('Happy Birthday!');
+  const [isEditingMessage, setIsEditingMessage] = useState(false);
 
   // Ken Burns animation for the photo
   const kenBurnsScale = useRef(new Animated.Value(1)).current;
@@ -331,12 +364,28 @@ export default function ShareCardModal({
 
   const handleClose = () => {
     stopAudio();
+    setActiveTab('share');
+    setGiftMessage('Happy Birthday!');
     onClose();
+  };
+
+  // Tab switching
+  const switchTab = (tab: 'share' | 'gift') => {
+    setActiveTab(tab);
+    Keyboard.dismiss();
+    Animated.spring(tabIndicatorAnim, {
+      toValue: tab === 'share' ? 0 : 1,
+      useNativeDriver: true,
+      friction: 8,
+      tension: 70,
+    }).start();
   };
 
   const captureCard = async (): Promise<string | null> => {
     try {
-      const uri = await viewShotRef.current?.capture?.();
+      // Use the hidden 9:16 export frames (with background) for saving
+      const ref = activeTab === 'gift' ? exportGiftRef : exportShareRef;
+      const uri = await ref.current?.capture?.();
       return uri || null;
     } catch (error) {
       console.error('Capture failed:', error);
@@ -480,117 +529,482 @@ export default function ShareCardModal({
                 <Ionicons name="chevron-back" size={24} color="#FFF" />
               </BlurView>
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>Share</Text>
+            <Text style={styles.headerTitle}>
+              {activeTab === 'share' ? 'Share' : 'Gift'}
+            </Text>
             <View style={{ width: 44 }} />
           </View>
 
-          {/* Main content area */}
-          <View style={styles.contentArea}>
-            {/* Polaroid Card with ViewShot for capture */}
-            <Animated.View style={{ transform: [{ translateY: cardFloat }] }}>
-              <ViewShot
-                ref={viewShotRef}
-                options={{ format: 'png', quality: 1 }}
+          {/* Tab Bar */}
+          <View style={styles.tabBar}>
+            <View style={styles.tabContainer}>
+              {/* Animated background indicator */}
+              <Animated.View
+                style={[
+                  styles.tabIndicator,
+                  {
+                    transform: [{
+                      translateX: tabIndicatorAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, (SCREEN_WIDTH - 56) / 2],
+                      }),
+                    }],
+                  },
+                ]}
+              />
+              <TouchableOpacity
+                style={styles.tabButton}
+                onPress={() => switchTab('share')}
+                activeOpacity={0.7}
               >
-                <View style={styles.polaroidCard}>
-                  {/* Photo with Ken Burns */}
-                  <View style={styles.photoFrame}>
-                    <Animated.Image
-                      source={{ uri: imageUri }}
-                      style={[
-                        styles.photo,
-                        {
-                          transform: [
-                            { scale: kenBurnsScale },
-                            { translateX: kenBurnsTranslateX },
-                            { translateY: kenBurnsTranslateY },
-                          ],
-                        },
-                      ]}
-                      resizeMode="cover"
-                    />
+                <Ionicons
+                  name="share-outline"
+                  size={16}
+                  color={activeTab === 'share' ? '#FFF' : 'rgba(255,255,255,0.5)'}
+                />
+                <Text style={[
+                  styles.tabText,
+                  activeTab === 'share' && styles.tabTextActive,
+                ]}>Share</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.tabButton}
+                onPress={() => switchTab('gift')}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name="gift-outline"
+                  size={16}
+                  color={activeTab === 'gift' ? '#FFF' : 'rgba(255,255,255,0.5)'}
+                />
+                <Text style={[
+                  styles.tabText,
+                  activeTab === 'gift' && styles.tabTextActive,
+                ]}>Gift</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* ====== SHARE TAB CONTENT ====== */}
+          {activeTab === 'share' && (
+            <>
+              <View style={styles.contentArea}>
+                <Animated.View style={{ transform: [{ translateY: cardFloat }] }}>
+                  <ViewShot
+                    ref={viewShotRef}
+                    options={{ format: 'png', quality: 1, width: Math.round(CARD_W * 2) }}
+                  >
                     <LinearGradient
-                      colors={['transparent', 'rgba(0,0,0,0.15)']}
-                      style={styles.photoGradient}
-                    />
-                  </View>
-
-                  {/* Caption area */}
-                  <View style={styles.captionArea}>
-                    <Text style={styles.songTitle} numberOfLines={1}>
-                      {trackTitle}
-                    </Text>
-
-                    {/* Tags */}
-                    {tags.length > 0 && (
-                      <View style={styles.tagsRow}>
-                        {tags.slice(0, 4).map((tag, i) => (
-                          <View key={i} style={styles.tag}>
-                            <Text style={styles.tagText}>#{tag}</Text>
+                      colors={[
+                        'rgba(255,183,178,0.1)',
+                        'rgba(239,237,244,0.15)',
+                        'rgba(253,252,248,0.8)',
+                      ]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.polaroidCard}
+                    >
+                      <View style={styles.photoFrame}>
+                        <Animated.Image
+                          source={{ uri: imageUri }}
+                          style={[
+                            styles.photo,
+                            {
+                              transform: [
+                                { scale: kenBurnsScale },
+                                { translateX: kenBurnsTranslateX },
+                                { translateY: kenBurnsTranslateY },
+                              ],
+                            },
+                          ]}
+                          resizeMode="cover"
+                        />
+                        <LinearGradient
+                          colors={['transparent', 'rgba(0,0,0,0.15)']}
+                          style={styles.photoGradient}
+                        />
+                      </View>
+                      <View style={styles.captionArea}>
+                        <Text style={styles.songTitle} numberOfLines={1}>
+                          {trackTitle}
+                        </Text>
+                        {tags.length > 0 && (
+                          <View style={styles.tagsRow}>
+                            {tags.slice(0, 4).map((tag, i) => (
+                              <View key={i} style={styles.tag}>
+                                <Text style={styles.tagText}>#{tag}</Text>
+                              </View>
+                            ))}
                           </View>
-                        ))}
+                        )}
                       </View>
-                    )}
+                      <View style={styles.cardFooter}>
+                        <View style={styles.brandRow}>
+                          <View style={styles.logoCircle}>
+                            <Ionicons name="musical-notes" size={8} color="#FFF" />
+                          </View>
+                          <Text style={styles.brandText}>MELODY SNAP</Text>
+                        </View>
+                      </View>
+                    </LinearGradient>
+                  </ViewShot>
+                </Animated.View>
+                {isAudioPlaying && (
+                  <View style={styles.visualizerWrapper}>
+                    <AudioVisualizer />
                   </View>
+                )}
+              </View>
 
-                  {/* Brand footer inside card */}
-                  <View style={styles.cardFooter}>
-                    <View style={styles.brandRow}>
-                      <View style={styles.logoCircle}>
-                        <Ionicons name="musical-notes" size={8} color="#FFF" />
+              <View style={styles.actionsArea}>
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.primaryBtn]}
+                  onPress={handleSaveVideo}
+                  disabled={isProcessing}
+                  activeOpacity={0.8}
+                >
+                  {isProcessing && processingType === 'video' ? (
+                    <ActivityIndicator color="#FFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="videocam" size={20} color="#FFF" />
+                      <Text style={styles.primaryBtnText}>Save Video</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.secondaryBtn]}
+                  onPress={handleSaveCard}
+                  disabled={isProcessing}
+                  activeOpacity={0.8}
+                >
+                  {isProcessing && processingType === 'card' ? (
+                    <ActivityIndicator color="#FFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="image-outline" size={20} color="#FFF" />
+                      <Text style={styles.secondaryBtnText}>Save Card</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+
+          {/* ====== GIFT TAB CONTENT ====== */}
+          {activeTab === 'gift' && (
+            <KeyboardAvoidingView
+              style={{ flex: 1 }}
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+            >
+            <ScrollView
+              ref={giftScrollRef}
+              style={{ flex: 1 }}
+              contentContainerStyle={styles.giftScrollContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Gift Polaroid Card */}
+              <Animated.View style={{ alignItems: 'center', transform: [{ translateY: cardFloat }] }}>
+                <ViewShot
+                  ref={giftViewShotRef}
+                  options={{ format: 'png', quality: 1, width: Math.round(CARD_W * 2) }}
+                >
+                  <LinearGradient
+                    colors={[
+                      'rgba(255,183,178,0.1)',
+                      'rgba(239,237,244,0.15)',
+                      'rgba(253,252,248,0.8)',
+                    ]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.giftCard}
+                  >
+                    {/* Photo — same frame as Share card */}
+                    <View style={styles.giftPhotoFrame}>
+                      <Image
+                        source={{ uri: imageUri }}
+                        style={styles.giftPhoto}
+                        resizeMode="cover"
+                      />
+                      {/* Gradient overlay for text readability */}
+                      <LinearGradient
+                        colors={['transparent', 'rgba(0,0,0,0.15)', 'rgba(0,0,0,0.65)']}
+                        locations={[0, 0.4, 1]}
+                        style={StyleSheet.absoluteFill}
+                      />
+                      {/* Gift message on photo */}
+                      <View style={styles.giftMessageOverlay}>
+                        <Text style={styles.giftMessageText}>
+                          {giftMessage}
+                        </Text>
                       </View>
-                      <Text style={styles.brandText}>MELODY SNAP</Text>
                     </View>
+
+                    {/* Caption area — same structure as Share card */}
+                    <View style={styles.captionArea}>
+                      <Text style={styles.songTitle} numberOfLines={1}>
+                        {trackTitle}
+                      </Text>
+                      {tags.length > 0 && (
+                        <View style={styles.tagsRow}>
+                          {tags.slice(0, 4).map((tag, i) => (
+                            <View key={i} style={styles.tag}>
+                              <Text style={styles.tagText}>#{tag}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+
+                    {/* Brand footer */}
+                    <View style={styles.cardFooter}>
+                      <View style={styles.brandRow}>
+                        <View style={styles.logoCircle}>
+                          <Ionicons name="musical-notes" size={8} color="#FFF" />
+                        </View>
+                        <Text style={styles.brandText}>MELODY SNAP</Text>
+                      </View>
+                    </View>
+                  </LinearGradient>
+                </ViewShot>
+              </Animated.View>
+
+              {/* Editable message area */}
+              <View
+                style={styles.giftEditArea}
+                onLayout={(e) => {
+                  giftEditAreaY.current = e.nativeEvent.layout.y;
+                }}
+              >
+                {isEditingMessage ? (
+                  <View style={styles.giftInputRow}>
+                    <TextInput
+                      style={styles.giftInput}
+                      value={giftMessage}
+                      onChangeText={(text) => {
+                        if (text.length <= MAX_GIFT_CHARS) setGiftMessage(text);
+                      }}
+                      maxLength={MAX_GIFT_CHARS}
+                      autoFocus
+                      onFocus={() => {
+                        // Scroll so the card's bottom half (with message preview) + input are both visible
+                        setTimeout(() => {
+                          giftScrollRef.current?.scrollTo({
+                            y: Math.max(0, giftEditAreaY.current - 120),
+                            animated: true,
+                          });
+                        }, 300);
+                      }}
+                      onBlur={() => setIsEditingMessage(false)}
+                      onSubmitEditing={() => setIsEditingMessage(false)}
+                      returnKeyType="done"
+                      placeholderTextColor="rgba(255,255,255,0.3)"
+                      placeholder="Type your message..."
+                      selectionColor={COLORS.primaryAccent}
+                    />
+                    <Text style={styles.charCounter}>
+                      {giftMessage.length}/{MAX_GIFT_CHARS}
+                    </Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.giftEditButton}
+                    onPress={() => setIsEditingMessage(true)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="pencil" size={14} color="rgba(255,255,255,0.6)" />
+                    <Text style={styles.giftEditButtonText}>
+                      Tap to edit message
+                    </Text>
+                    <Text style={styles.charCounter}>
+                      {giftMessage.length}/{MAX_GIFT_CHARS}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Preset tags */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.presetsContainer}
+                >
+                  {GIFT_PRESETS.map((preset, i) => (
+                    <TouchableOpacity
+                      key={i}
+                      style={[
+                        styles.presetChip,
+                        giftMessage === preset && styles.presetChipActive,
+                      ]}
+                      onPress={() => {
+                        setGiftMessage(preset);
+                        setIsEditingMessage(false);
+                        Keyboard.dismiss();
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[
+                        styles.presetChipText,
+                        giftMessage === preset && styles.presetChipTextActive,
+                      ]}>{preset}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+
+              {/* Gift action buttons (inside scroll) */}
+              <View style={styles.giftActionsArea}>
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.primaryBtn]}
+                  onPress={handleSaveVideo}
+                  disabled={isProcessing}
+                  activeOpacity={0.8}
+                >
+                  {isProcessing && processingType === 'video' ? (
+                    <ActivityIndicator color="#FFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="videocam" size={20} color="#FFF" />
+                      <Text style={styles.primaryBtnText}>Save as Video</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.secondaryBtn]}
+                  onPress={handleSaveCard}
+                  disabled={isProcessing}
+                  activeOpacity={0.8}
+                >
+                  {isProcessing && processingType === 'card' ? (
+                    <ActivityIndicator color="#FFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="image-outline" size={20} color="#FFF" />
+                      <Text style={styles.secondaryBtnText}>Save as Image</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+            </KeyboardAvoidingView>
+          )}
+        </SafeAreaView>
+
+        {/* ====== HIDDEN EXPORT FRAMES (off-screen, for 9:16 saves) ====== */}
+        <View style={styles.exportOffscreen} pointerEvents="none">
+          {/* Share export frame */}
+          <ViewShot ref={exportShareRef} options={{ format: 'png', quality: 1, width: 1080 }}>
+            <View style={styles.exportFrame}>
+              <Image
+                source={{ uri: imageUri }}
+                style={StyleSheet.absoluteFill}
+                resizeMode="cover"
+                blurRadius={40}
+              />
+              <LinearGradient
+                colors={['rgba(0,0,0,0.4)', 'rgba(0,0,0,0.7)']}
+                style={StyleSheet.absoluteFill}
+              />
+              <LinearGradient
+                colors={[
+                  'rgba(255,183,178,0.1)',
+                  'rgba(239,237,244,0.15)',
+                  'rgba(253,252,248,0.8)',
+                ]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.polaroidCard}
+              >
+                <View style={styles.photoFrame}>
+                  <Image source={{ uri: imageUri }} style={styles.photo} resizeMode="cover" />
+                  <LinearGradient
+                    colors={['transparent', 'rgba(0,0,0,0.15)']}
+                    style={styles.photoGradient}
+                  />
+                </View>
+                <View style={styles.captionArea}>
+                  <Text style={styles.songTitle} numberOfLines={1}>{trackTitle}</Text>
+                  {tags.length > 0 && (
+                    <View style={styles.tagsRow}>
+                      {tags.slice(0, 4).map((tag, i) => (
+                        <View key={i} style={styles.tag}>
+                          <Text style={styles.tagText}>#{tag}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+                <View style={styles.cardFooter}>
+                  <View style={styles.brandRow}>
+                    <View style={styles.logoCircle}>
+                      <Ionicons name="musical-notes" size={8} color="#FFF" />
+                    </View>
+                    <Text style={styles.brandText}>MELODY SNAP</Text>
                   </View>
                 </View>
-              </ViewShot>
-            </Animated.View>
+              </LinearGradient>
+            </View>
+          </ViewShot>
 
-            {/* Audio Visualizer */}
-            {isAudioPlaying && (
-              <View style={styles.visualizerWrapper}>
-                <AudioVisualizer />
-              </View>
-            )}
-          </View>
-
-          {/* Bottom action buttons */}
-          <View style={styles.actionsArea}>
-            {/* Save Video Button */}
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.primaryBtn]}
-              onPress={handleSaveVideo}
-              disabled={isProcessing}
-              activeOpacity={0.8}
-            >
-              {isProcessing && processingType === 'video' ? (
-                <ActivityIndicator color="#FFF" />
-              ) : (
-                <>
-                  <Ionicons name="videocam" size={20} color="#FFF" />
-                  <Text style={styles.primaryBtnText}>Save Video</Text>
-                </>
-              )}
-            </TouchableOpacity>
-
-            {/* Save Card Button */}
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.secondaryBtn]}
-              onPress={handleSaveCard}
-              disabled={isProcessing}
-              activeOpacity={0.8}
-            >
-              {isProcessing && processingType === 'card' ? (
-                <ActivityIndicator color="#FFF" />
-              ) : (
-                <>
-                  <Ionicons name="image-outline" size={20} color="#FFF" />
-                  <Text style={styles.secondaryBtnText}>Save Card</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
+          {/* Gift export frame */}
+          <ViewShot ref={exportGiftRef} options={{ format: 'png', quality: 1, width: 1080 }}>
+            <View style={styles.exportFrame}>
+              <Image
+                source={{ uri: imageUri }}
+                style={StyleSheet.absoluteFill}
+                resizeMode="cover"
+                blurRadius={40}
+              />
+              <LinearGradient
+                colors={['rgba(0,0,0,0.4)', 'rgba(0,0,0,0.7)']}
+                style={StyleSheet.absoluteFill}
+              />
+              <LinearGradient
+                colors={[
+                  'rgba(255,183,178,0.1)',
+                  'rgba(239,237,244,0.15)',
+                  'rgba(253,252,248,0.8)',
+                ]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.polaroidCard}
+              >
+                <View style={styles.photoFrame}>
+                  <Image source={{ uri: imageUri }} style={styles.photo} resizeMode="cover" />
+                  <LinearGradient
+                    colors={['transparent', 'rgba(0,0,0,0.15)', 'rgba(0,0,0,0.65)']}
+                    locations={[0, 0.4, 1]}
+                    style={StyleSheet.absoluteFill}
+                  />
+                  <View style={styles.giftMessageOverlay}>
+                    <Text style={styles.giftMessageText}>{giftMessage}</Text>
+                  </View>
+                </View>
+                <View style={styles.captionArea}>
+                  <Text style={styles.songTitle} numberOfLines={1}>{trackTitle}</Text>
+                  {tags.length > 0 && (
+                    <View style={styles.tagsRow}>
+                      {tags.slice(0, 4).map((tag, i) => (
+                        <View key={i} style={styles.tag}>
+                          <Text style={styles.tagText}>#{tag}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+                <View style={styles.cardFooter}>
+                  <View style={styles.brandRow}>
+                    <View style={styles.logoCircle}>
+                      <Ionicons name="musical-notes" size={8} color="#FFF" />
+                    </View>
+                    <Text style={styles.brandText}>MELODY SNAP</Text>
+                  </View>
+                </View>
+              </LinearGradient>
+            </View>
+          </ViewShot>
+        </View>
       </View>
     </Modal>
   );
@@ -601,6 +1015,10 @@ export default function ShareCardModal({
 // ============================================
 const CARD_W = SCREEN_WIDTH * 0.78;
 const PHOTO_H = CARD_W * 1.1;
+
+// Export frame: 9:16 ratio matching iPhone portrait video (1080×1920)
+const EXPORT_W = CARD_W + 32; // 16px padding each side for card shadow room
+const EXPORT_H = EXPORT_W * (16 / 9);
 
 const styles = StyleSheet.create({
   screen: {
@@ -639,6 +1057,47 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
+  // Tab Bar
+  tabBar: {
+    alignItems: 'center',
+    paddingHorizontal: 28,
+    paddingBottom: 8,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 14,
+    padding: 3,
+    width: SCREEN_WIDTH - 56,
+    position: 'relative',
+  },
+  tabIndicator: {
+    position: 'absolute',
+    top: 3,
+    left: 3,
+    width: (SCREEN_WIDTH - 56) / 2 - 3,
+    height: '100%',
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 11,
+  },
+  tabButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    gap: 6,
+    zIndex: 1,
+  },
+  tabText: {
+    fontFamily: FONTS.primary.semiBold,
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.5)',
+  },
+  tabTextActive: {
+    color: '#FFF',
+  },
+
   // Content
   contentArea: {
     flex: 1,
@@ -651,15 +1110,17 @@ const styles = StyleSheet.create({
   // Polaroid Card
   polaroidCard: {
     width: CARD_W,
-    backgroundColor: '#FFFFFF',
     borderRadius: 28,
     padding: 14,
     paddingBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.5)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 20 },
     shadowOpacity: 0.35,
     shadowRadius: 40,
     elevation: 25,
+    overflow: 'hidden',
   },
   photoFrame: {
     width: '100%',
@@ -752,6 +1213,152 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
+  // Gift scroll layout
+  giftScrollContent: {
+    alignItems: 'center',
+    paddingTop: 16,
+    paddingBottom: 32,
+    paddingHorizontal: 20,
+    gap: 20,
+  },
+
+  // Gift Card
+  giftCard: {
+    width: CARD_W,
+    borderRadius: 28,
+    padding: 14,
+    paddingBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.5)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 20 },
+    shadowOpacity: 0.35,
+    shadowRadius: 40,
+    elevation: 25,
+    overflow: 'hidden',
+  },
+  giftPhotoFrame: {
+    width: '100%',
+    height: PHOTO_H,
+    borderRadius: 18,
+    overflow: 'hidden',
+    backgroundColor: '#F0EDE5',
+  },
+  giftPhoto: {
+    width: '100%',
+    height: '100%',
+  },
+  giftMessageOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+    paddingTop: 40,
+  },
+  giftMessageText: {
+    fontFamily: FONTS.primary.extraBold,
+    fontSize: 28,
+    color: '#FFF',
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 8,
+    letterSpacing: 0.5,
+  },
+  giftCardFooter: {
+    paddingTop: 12,
+    alignItems: 'center',
+    gap: 6,
+  },
+  giftSongLabel: {
+    fontFamily: FONTS.primary.regular,
+    fontSize: 11,
+    color: '#A8A29E',
+    letterSpacing: 0.3,
+  },
+
+  // Gift Edit Area
+  giftEditArea: {
+    width: CARD_W,
+    gap: 12,
+    marginTop: 4,
+  },
+  giftInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  giftInput: {
+    flex: 1,
+    fontFamily: FONTS.primary.semiBold,
+    fontSize: 16,
+    color: '#FFF',
+    padding: 0,
+  },
+  charCounter: {
+    fontFamily: FONTS.primary.regular,
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.35)',
+    marginLeft: 8,
+  },
+  giftEditButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    gap: 8,
+  },
+  giftEditButtonText: {
+    fontFamily: FONTS.primary.regular,
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.5)',
+    flex: 1,
+  },
+  presetsContainer: {
+    paddingVertical: 4,
+    gap: 8,
+  },
+  presetChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    marginRight: 8,
+  },
+  presetChipActive: {
+    backgroundColor: 'rgba(255, 183, 178, 0.2)',
+    borderColor: COLORS.primaryAccent,
+  },
+  presetChipText: {
+    fontFamily: FONTS.primary.semiBold,
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.5)',
+  },
+  presetChipTextActive: {
+    color: COLORS.primaryAccent,
+  },
+
+  // Gift actions (inside scroll, not fixed)
+  giftActionsArea: {
+    width: '100%',
+    gap: 10,
+    marginTop: 4,
+  },
+
   // Actions
   actionsArea: {
     paddingHorizontal: 28,
@@ -783,5 +1390,19 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.primary.semiBold,
     fontSize: 16,
     color: '#FFF',
+  },
+
+  // Hidden export frames (off-screen for 9:16 capture)
+  exportOffscreen: {
+    position: 'absolute',
+    left: -SCREEN_WIDTH * 3,
+    top: 0,
+  },
+  exportFrame: {
+    width: EXPORT_W,
+    height: EXPORT_H,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#000',
   },
 });
